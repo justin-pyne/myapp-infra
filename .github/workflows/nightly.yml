@@ -123,9 +123,9 @@ jobs:
         run: |
           sed "s/EPHEMERAL_IP_PLACEHOLDER/${{ steps.launch.outputs.private_ip }}/g" /tmp/.env.ephemeral > /tmp/.env.ephemeral.final
 
-          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/myapp-api.tar.gz ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/
-          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/myapp-ui.tar.gz ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/
-          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/docker-compose.ephemeral.yml ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/myapp-api.tar.gz ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/myapp-api.tar.gz
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/myapp-ui.tar.gz ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/myapp-ui.tar.gz
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/docker-compose.ephemeral.yml ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/docker-compose.ephemeral.yml
           scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/.env.ephemeral.final ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/.env
 
       - name: Start app on ephemeral

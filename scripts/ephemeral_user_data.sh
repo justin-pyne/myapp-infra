@@ -20,3 +20,4 @@ systemctl enable docker
 systemctl start docker
 
 mkdir -p /opt/myapp
+chown -R ubuntu:ubuntu /opt/myapp
