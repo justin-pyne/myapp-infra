@@ -1,1 +1,171 @@
-runs-on: self-hosted
+name: Nightly Verify and Deploy
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 9 * * *"   # 1:00 AM Pacific during standard time / 2:00 AM during daylight time
+
+jobs:
+  nightly:
+    runs-on: self-hosted
+
+    env:
+      AWS_REGION: us-west-2
+      AWS_ACCOUNT_ID: "419636731739"
+      AMI_ID: ami-055c254ebd87b4dba
+      SUBNET_ID: subnet-01d99cdd94461a328
+      EPHEMERAL_SG_ID: sg-00f2400963436ba19
+      INSTANCE_PROFILE: LabInstanceProfile
+      USER_DATA_FILE: scripts/ephemeral_user_data.sh
+
+      SOURCE_REPO: <YOUR_GITHUB_USERNAME>/myapp-source
+      IMAGE_TAG: ${{ github.sha }}
+
+      # Set these as GitHub Actions secrets in myapp-infra
+      KEY_NAME: ${{ secrets.EPHEMERAL_KEY_NAME }}
+      RDS_ENDPOINT: ${{ secrets.RDS_ENDPOINT }}
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME: ${{ secrets.DB_NAME }}
+      CLIENT_ORIGIN: https://myapp.justinpyne.xyz
+      QA_HOST: 127.0.0.1
+
+    steps:
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+
+      - name: Checkout source repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          path: myapp-source
+
+      - name: Ensure tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq openssh-client
+          docker --version
+          docker compose version
+          aws sts get-caller-identity
+
+      - name: Build candidate images
+        working-directory: myapp-source
+        run: |
+          docker compose build
+          docker tag myapp-source-bezkoder-api:latest myapp-api:candidate
+          docker tag myapp-source-bezkoder-ui:latest myapp-ui:candidate
+
+      - name: Save candidate images
+        run: |
+          docker save myapp-api:candidate | gzip > /tmp/myapp-api.tar.gz
+          docker save myapp-ui:candidate  | gzip > /tmp/myapp-ui.tar.gz
+
+      - name: Write ephemeral env and compose
+        run: |
+          cat > /tmp/.env.ephemeral <<EOF
+          DB_HOST=${RDS_ENDPOINT}
+          DB_USER=${DB_USER}
+          DB_PASSWORD=${DB_PASSWORD}
+          DB_NAME=${DB_NAME}
+          DB_PORT=3306
+          NODE_DOCKER_PORT=8080
+          CLIENT_ORIGIN=http://EPHEMERAL_IP_PLACEHOLDER
+          EOF
+
+          cat > /tmp/docker-compose.ephemeral.yml <<EOF
+          services:
+            bezkoder-api:
+              image: myapp-api:candidate
+              restart: unless-stopped
+              ports:
+                - "80:8080"
+              environment:
+                DB_HOST: \${DB_HOST}
+                DB_USER: \${DB_USER}
+                DB_PASSWORD: \${DB_PASSWORD}
+                DB_NAME: \${DB_NAME}
+                DB_PORT: \${DB_PORT}
+                NODE_DOCKER_PORT: \${NODE_DOCKER_PORT}
+                CLIENT_ORIGIN: \${CLIENT_ORIGIN}
+
+            bezkoder-ui:
+              image: myapp-ui:candidate
+              restart: unless-stopped
+              ports:
+                - "8081:80"
+          EOF
+
+      - name: Launch ephemeral EC2
+        id: launch
+        run: |
+          OUTPUT=$(scripts/ec2_ephemeral_create.sh)
+          echo "$OUTPUT"
+          INSTANCE_ID=$(echo "$OUTPUT" | awk -F= '/INSTANCE_ID=/{print $2}')
+          PUBLIC_IP=$(echo "$OUTPUT" | awk -F= '/PUBLIC_IP=/{print $2}')
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "public_ip=$PUBLIC_IP" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EPHEMERAL_SSH_PRIVATE_KEY }}" > ~/.ssh/ephemeral.pem
+          chmod 600 ~/.ssh/ephemeral.pem
+          for i in {1..30}; do
+            if ssh -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem ubuntu@${{ steps.launch.outputs.public_ip }} 'echo ssh-ok'; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "SSH did not become ready" >&2
+          exit 1
+
+      - name: Copy candidate artifacts to ephemeral
+        run: |
+          sed "s/EPHEMERAL_IP_PLACEHOLDER/${{ steps.launch.outputs.public_ip }}/g" /tmp/.env.ephemeral > /tmp/.env.ephemeral.final
+
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/myapp-api.tar.gz ubuntu@${{ steps.launch.outputs.public_ip }}:/opt/myapp/
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/myapp-ui.tar.gz ubuntu@${{ steps.launch.outputs.public_ip }}:/opt/myapp/
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/docker-compose.ephemeral.yml ubuntu@${{ steps.launch.outputs.public_ip }}:/opt/myapp/
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/.env.ephemeral.final ubuntu@${{ steps.launch.outputs.public_ip }}:/opt/myapp/.env
+
+      - name: Start app on ephemeral
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem ubuntu@${{ steps.launch.outputs.public_ip }} '
+            set -e
+            cd /opt/myapp
+            gunzip -c myapp-api.tar.gz | docker load
+            gunzip -c myapp-ui.tar.gz | docker load
+            docker compose -f docker-compose.ephemeral.yml --env-file .env up -d
+          '
+
+      - name: Wait for app to boot
+        run: sleep 25
+
+      - name: Smoke test ephemeral
+        run: |
+          scripts/smoke_test.sh http://${{ steps.launch.outputs.public_ip }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" | \
+            docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: Tag and push images to ECR
+        run: |
+          docker tag myapp-api:candidate ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/myapp-api:${IMAGE_TAG}
+          docker tag myapp-ui:candidate  ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/myapp-ui:${IMAGE_TAG}
+          docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/myapp-api:${IMAGE_TAG}
+          docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/myapp-ui:${IMAGE_TAG}
+
+      - name: Deploy to QA host
+        run: |
+          scripts/qa_deploy.sh
+
+      - name: Smoke test QA
+        run: |
+          scripts/smoke_test.sh https://myapp.justinpyne.xyz
+
+      - name: Terminate ephemeral
+        if: always()
+        run: |
+          scripts/ec2_ephemeral_terminate.sh "${{ steps.launch.outputs.instance_id }}"
