@@ -18,7 +18,7 @@ jobs:
       INSTANCE_PROFILE: LabInstanceProfile
       USER_DATA_FILE: scripts/ephemeral_user_data.sh
 
-      SOURCE_REPO: <YOUR_GITHUB_USERNAME>/myapp-source
+      SOURCE_REPO: justin-pyne/myapp-source
       IMAGE_TAG: ${{ github.sha }}
 
       # Set these as GitHub Actions secrets in myapp-infra
