@@ -119,9 +119,24 @@ jobs:
           echo "SSH did not become ready" >&2
           exit 1
 
+      - name: Wait for cloud-init to finish
+        run: |
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem ubuntu@${{ steps.launch.outputs.private_ip }} '
+            set -e
+            while [ ! -f /var/lib/cloud/instance/boot-finished ]; do
+              echo "Waiting for cloud-init..."
+              sleep 5
+            done
+            echo "cloud-init finished"
+          '
+
       - name: Copy candidate artifacts to ephemeral
         run: |
           sed "s/EPHEMERAL_IP_PLACEHOLDER/${{ steps.launch.outputs.private_ip }}/g" /tmp/.env.ephemeral > /tmp/.env.ephemeral.final
+
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem ubuntu@${{ steps.launch.outputs.private_ip }} '
+            mkdir -p /opt/myapp
+          '
 
           scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/myapp-api.tar.gz ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/myapp-api.tar.gz
           scp -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem /tmp/myapp-ui.tar.gz ubuntu@${{ steps.launch.outputs.private_ip }}:/opt/myapp/myapp-ui.tar.gz
