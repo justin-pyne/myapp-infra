@@ -5,15 +5,19 @@ REGION="${AWS_REGION:?AWS_REGION not set}"
 AMI_ID="${AMI_ID:?AMI_ID not set}"
 SUBNET_ID="${SUBNET_ID:?SUBNET_ID not set}"
 SG_ID="${EPHEMERAL_SG_ID:?EPHEMERAL_SG_ID not set}"
-INSTANCE_PROFILE="${INSTANCE_PROFILE:?INSTANCE_PROFILE not set}"   # e.g. LabRole instance profile name
+INSTANCE_PROFILE="${INSTANCE_PROFILE:?INSTANCE_PROFILE not set}"
+KEY_NAME="${KEY_NAME:?KEY_NAME not set}"
+USER_DATA_FILE="${USER_DATA_FILE:-scripts/ephemeral_user_data.sh}"
 
 INSTANCE_ID=$(aws ec2 run-instances \
   --region "$REGION" \
   --image-id "$AMI_ID" \
   --instance-type t3.micro \
   --iam-instance-profile Name="$INSTANCE_PROFILE" \
+  --key-name "$KEY_NAME" \
   --subnet-id "$SUBNET_ID" \
   --security-group-ids "$SG_ID" \
+  --user-data "file://$USER_DATA_FILE" \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=myapp-ephemeral-verify}]" \
   --query "Instances[0].InstanceId" \
   --output text)
