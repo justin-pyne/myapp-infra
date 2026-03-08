@@ -32,4 +32,11 @@ PUBLIC_IP=$(aws ec2 describe-instances \
   --query "Reservations[0].Instances[0].PublicIpAddress" \
   --output text)
 
+PRIVATE_IP=$(aws ec2 describe-instances \
+  --region "$REGION" \
+  --instance-ids "$INSTANCE_ID" \
+  --query "Reservations[0].Instances[0].PrivateIpAddress" \
+  --output text)
+
 echo "PUBLIC_IP=$PUBLIC_IP"
+echo "PRIVATE_IP=$PRIVATE_IP"
