@@ -19,5 +19,7 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin do
 systemctl enable docker
 systemctl start docker
 
+usermod -aG docker ubuntu
+
 mkdir -p /opt/myapp
 chown -R ubuntu:ubuntu /opt/myapp

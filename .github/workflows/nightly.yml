@@ -148,9 +148,9 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i ~/.ssh/ephemeral.pem ubuntu@${{ steps.launch.outputs.private_ip }} '
             set -e
             cd /opt/myapp
-            gunzip -c myapp-api.tar.gz | docker load
-            gunzip -c myapp-ui.tar.gz | docker load
-            docker compose -f docker-compose.ephemeral.yml --env-file .env up -d
+            gunzip -c myapp-api.tar.gz | sudo docker load
+            gunzip -c myapp-ui.tar.gz | sudo docker load
+            sudo docker compose -f docker-compose.ephemeral.yml --env-file .env up -d
           '
 
       - name: Wait for app to boot
